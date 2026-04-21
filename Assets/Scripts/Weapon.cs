@@ -5,11 +5,14 @@ using System.Collections;
 public class Weapon : MonoBehaviour
 {
     [Header("Data")]
-    public WeaponData data;          // Ссылка на ScriptableObject
-    public Transform firePoint;      // Точка выстрела (опционально, если нет - будет камера)
+    public WeaponData data;
+    public Transform firePoint;
 
     [Header("UI")]
-    public Text ammoText;            // Поле UI для отображения патронов
+    public Text ammoText;
+
+    [Header("Отдача")]
+    public float recoilRecoverySpeed = 5f; // Скорость возврата прицела
 
     private int currentAmmo;
     private int currentReserve;
@@ -17,9 +20,14 @@ public class Weapon : MonoBehaviour
     private bool isReloading;
     private Camera playerCamera;
 
+    // Переменные для контроля отдачи
+    private Vector3 cameraBaseRotation;
+    private float currentRecoil = 0f;
+
     void Start()
     {
         playerCamera = Camera.main;
+        cameraBaseRotation = playerCamera.transform.localEulerAngles; // Запоминаем стартовый угол
         currentAmmo = data.magazineSize;
         currentReserve = data.totalReserve;
         UpdateUI();
@@ -29,17 +37,32 @@ public class Weapon : MonoBehaviour
     {
         if (isReloading) return;
 
-        // Стрельба (ЛКМ или пробел, зависит от Input Manager)
+        // Стрельба
         if (Input.GetButton("Fire1") && Time.time >= nextFireTime && currentAmmo > 0)
         {
             Shoot();
             nextFireTime = Time.time + data.fireRate;
         }
 
-        // Перезарядка (клавиша R)
+        // Перезарядка
         if (Input.GetKeyDown(KeyCode.R) && currentAmmo < data.magazineSize && currentReserve > 0)
         {
             StartCoroutine(Reload());
+        }
+
+        // Возврат отдачи (плавное опускание прицела)
+        if (currentRecoil > 0.01f)
+        {
+            currentRecoil = Mathf.Lerp(currentRecoil, 0f, Time.deltaTime * recoilRecoverySpeed);
+
+            // Применяем только отклонение по X, не сбрасывая поворот игрока
+            Vector3 targetRot = cameraBaseRotation;
+            targetRot.x -= currentRecoil;
+            playerCamera.transform.localEulerAngles = targetRot;
+        }
+        else if (currentRecoil > 0f)
+        {
+            currentRecoil = 0f;
         }
     }
 
@@ -52,30 +75,33 @@ public class Weapon : MonoBehaviour
         if (data.shootSound != null)
             AudioSource.PlayClipAtPoint(data.shootSound, transform.position);
 
-        // Визуальная вспышка (если назначен префаб)
+        // Вспышка
         if (data.muzzleFlashPrefab != null)
             Instantiate(data.muzzleFlashPrefab, firePoint != null ? firePoint.position : transform.position, Quaternion.identity);
 
-        // Расчёт направления с разбросом
-        Vector3 direction = playerCamera.transform.forward;
-        direction += Random.insideUnitSphere * data.spread;
-        direction.Normalize();
+        // Логика дробовика: если имя "Shotgun", выпускаем 8 лучей, иначе 1
+        int pellets = (data.weaponName == "Shotgun") ? 8 : 1;
 
-        // Raycast (луч)
-        if (Physics.Raycast(playerCamera.transform.position, direction, out RaycastHit hit, 100f))
+        for (int i = 0; i < pellets; i++)
         {
-            Debug.DrawLine(playerCamera.transform.position, hit.point, Color.red, 2f); // Визуализация для отладки
+            Vector3 direction = playerCamera.transform.forward;
+            direction += Random.insideUnitSphere * data.spread;
+            direction.Normalize();
 
-            // Попытка нанести урон (если на объекте есть скрипт EnemyTarget)
-            EnemyTarget enemy = hit.collider.GetComponent<EnemyTarget>();
-            if (enemy != null)
+            if (Physics.Raycast(playerCamera.transform.position, direction, out RaycastHit hit, 100f))
             {
-                enemy.TakeDamage(data.damage);
+                Debug.DrawLine(playerCamera.transform.position, hit.point, Color.red, 2f);
+
+                EnemyTarget enemy = hit.collider.GetComponent<EnemyTarget>();
+                if (enemy != null)
+                {
+                    enemy.TakeDamage(data.damage);
+                }
             }
         }
 
-        // Отдача камеры
-        playerCamera.transform.Rotate(-data.recoilForce, Random.Range(-1f, 1f), 0f);
+        // Отдача
+        currentRecoil += data.recoilForce;
     }
 
     IEnumerator Reload()
@@ -84,7 +110,7 @@ public class Weapon : MonoBehaviour
         if (data.reloadSound != null)
             AudioSource.PlayClipAtPoint(data.reloadSound, transform.position);
 
-        yield return new WaitForSeconds(2f); // Время перезарядки (позже вынесем в data)
+        yield return new WaitForSeconds(2f);
 
         int needed = data.magazineSize - currentAmmo;
         int take = Mathf.Min(needed, currentReserve);
@@ -99,5 +125,17 @@ public class Weapon : MonoBehaviour
     {
         if (ammoText != null)
             ammoText.text = $"{currentAmmo}/{currentReserve}";
+    }
+
+    // Фикс зависания UI и перезарядки при смене оружия
+    private void OnDisable()
+    {
+        StopAllCoroutines();
+        isReloading = false;
+    }
+
+    private void OnEnable()
+    {
+        UpdateUI();
     }
 }
