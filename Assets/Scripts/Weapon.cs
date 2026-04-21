@@ -127,7 +127,7 @@ public class Weapon : MonoBehaviour
             ammoText.text = $"{currentAmmo}/{currentReserve}";
     }
 
-    // ‘икс зависани€ UI и перезар€дки при смене оружи€
+    // »справление зависани€ UI и перезар€дки при смене оружи€
     private void OnDisable()
     {
         StopAllCoroutines();
